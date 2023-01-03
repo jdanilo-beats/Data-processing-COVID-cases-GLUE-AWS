@@ -150,14 +150,14 @@ Se muestra la tabla "casos_countries" almacenada en formato PARQUET
 Se realiza la conexion de ATHENA con POWER BI para exportar la tabla "casos_countries" y poder realizar un DASHBOARD y analizar indicadores clave.
 
 <p align="center">
-  <img width="1050" height="450" src="Images/powerbi1.jpg">
+  <img width="850" height="450" src="Images/powerbi1.jpg">
 </p>
 
 ## DASHBOARD CASOS COVID-19 en el MUNDO en 2020-2021
 Se muestra informacion relacionada al covid en el mundo, obteniendo datos sobre el total de casos por trimestre, el total de muertes por año, el total de nuevos casos por pais en estos 2 ultimos años.
 
 <p align="center">
-  <img width="1200" height="750" src="CASOS_COVID_DASHBOARD.jpg">
+  <img width="1200" height="600" src="CASOS_COVID_DASHBOARD.jpg">
 </p>
 
 
