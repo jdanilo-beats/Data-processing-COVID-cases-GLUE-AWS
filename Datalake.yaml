@@ -1,0 +1,256 @@
+Description: Creando recursos Workshop Glue
+Parameters:
+
+  pS3BucketRaw:
+    Description: Nombre del bucket en S3
+    Type: String
+    Default: datalake-raw
+    
+  pS3BucketStage:
+    Description: Nombre del bucket en S3
+    Type: String
+    Default: datalake-stage
+    
+  pS3BucketAnalytics:
+    Description: Nombre del bucket en S3
+    Type: String
+    Default: datalake-analytics
+    
+  pS3BucketAthenaResults:
+    Description: Nombre del bucket en S3
+    Type: String
+    Default: athena-results
+    
+  pGlueDatabaseNameRaw:
+    Description: Nombre de la base de datos Raw en Glue
+    Type: String
+    Default: datalake_raw
+    
+  pGlueDatabaseNameStage:
+    Description: Nombre de la base de datos Stage en Glue
+    Type: String
+    Default: datalake_stage
+    
+  pGlueDatabaseNameAnalytics:
+    Description: Nombre de la base de datos Analytics en Glue
+    Type: String
+    Default: datalake_analytics
+    
+  pRoleGlue:
+    Description: Nombre del rol para los crawler y job en Glue
+    Type: String
+    Default: RoleGlue
+    
+Resources:
+
+  BucketRaw:
+    Type: AWS::S3::Bucket
+    DependsOn:
+      - rProcessingLambdaPermission
+    Properties:
+      BucketName: !Join [ -, [ !Ref pS3BucketRaw, !Ref AWS::AccountId ] ]
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt rFunctionLambda.Arn
+            Filter:
+              S3Key:
+                Rules:
+                - Name: prefix
+                  Value: data/schema/covid/
+                  
+  BucketStage:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Join [ -, [ !Ref pS3BucketStage, !Ref AWS::AccountId ] ]
+      
+  BucketAnalytics:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Join [ -, [ !Ref pS3BucketAnalytics, !Ref AWS::AccountId ] ]
+      
+  BucketAthena:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Join [ -, [ !Ref pS3BucketAthenaResults, !Ref AWS::AccountId ] ]
+      
+  rProcessingLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref rFunctionLambda
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub 'arn:aws:s3:::${pS3BucketRaw}-${AWS::AccountId}'
+      SourceAccount: !Ref AWS::AccountId
+      
+  ProcessingLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName: allowLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: arn:aws:logs:*:*:*
+        - PolicyName: getAndDeleteObjects
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - glue:StartCrawler
+              - s3:GetObject
+              Resource:  
+              - !Sub 'arn:aws:s3:::${pS3BucketRaw}-${AWS::AccountId}/*'
+              - '*'
+              
+  rFunctionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ExecuteStartCrawler
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import sys, os
+          
+          glue = boto3.client("glue")
+          
+          def lambda_handler(event, context):
+              
+              s3_bucket = event['Records'][0]['s3']['bucket']['name']
+              s3_object = event['Records'][0]['s3']['object']['key']
+              
+              parse_id_source = s3_object.split('/')[3]
+              if parse_id_source == 'casos':
+                glue.start_crawler(Name = 'RawCasosCovid')
+              elif parse_id_source == 'countries':
+                glue.start_crawler(Name = 'RawCountries')   
+                
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Crawler en ejecución')
+              }
+
+      Handler: index.lambda_handler
+      Role: !GetAtt ProcessingLambdaExecutionRole.Arn
+      Runtime: python3.7
+      MemorySize: 128
+      Timeout: 300
+      
+  rRoleGlue:
+    Type: AWS::IAM::Role
+    DependsOn: BucketRaw
+    Properties:
+      RoleName: !Ref pRoleGlue
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "glue.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        -
+          PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action: 
+                - Glue:*
+                - s3:*
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                Resource: 
+                - "*"
+                - !Sub 'arn:aws:s3:::${BucketRaw}/*'
+                - !Sub 'arn:aws:s3:::${BucketStage}'
+                - !Sub 'arn:aws:s3:::${BucketStage}/*'
+                
+  rGlueDatabaseRaw:
+    Type: "AWS::Glue::Database"
+    DependsOn: BucketRaw
+    Properties:
+      DatabaseInput:
+        Description: "Base de datos de Glue - Raw"
+        Name: !Ref pGlueDatabaseNameRaw
+      CatalogId: !Ref AWS::AccountId
+      
+  rGlueDatabaseStage:
+    Type: "AWS::Glue::Database"
+    DependsOn: BucketRaw
+    Properties:
+      DatabaseInput:
+        Description: "Base de datos de Glue - Stage"
+        Name: !Ref pGlueDatabaseNameStage
+      CatalogId: !Ref AWS::AccountId
+      
+  rGlueDatabaseAnalytics:
+    Type: "AWS::Glue::Database"
+    DependsOn: BucketAnalytics
+    Properties:
+      DatabaseInput:
+        Description: "Base de datos de Glue - Analytics"
+        Name: !Ref pGlueDatabaseNameAnalytics
+      CatalogId: !Ref AWS::AccountId
+      
+  rCrawlerRawCasos:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: "RawCasosCovid"
+      Description: Crawler que genera una tabla en formato CSV en el esquema RAW
+      Role: !GetAtt rRoleGlue.Arn
+      DatabaseName: !Ref rGlueDatabaseRaw
+      Targets:
+        S3Targets:
+          - Path: !Join [ "/", [ !Join [ "-", [ !Ref pS3BucketRaw, !Ref AWS::AccountId ] ] , "data", "schema", "covid", "casos" ] ] 
+      SchemaChangePolicy:
+        UpdateBehavior: "UPDATE_IN_DATABASE"
+        DeleteBehavior: "LOG"
+        
+  rCrawlerRawCountries:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: "RawCountries"
+      Description: Crawler que genera una tabla en formato CSV en el esquema RAW
+      Role: !GetAtt rRoleGlue.Arn
+      DatabaseName: !Ref rGlueDatabaseRaw
+      Targets:
+        S3Targets:
+          - Path: !Join [ "/", [ !Join [ "-", [ !Ref pS3BucketRaw, !Ref AWS::AccountId ] ] , "data", "schema", "covid", "countries" ] ] 
+      SchemaChangePolicy:
+        UpdateBehavior: "UPDATE_IN_DATABASE"
+        DeleteBehavior: "LOG"
+        
+  rCrawlerStage:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: "Crawler_Stage"
+      Description: Crawler que genera una tabla en formato PARQUET en el esquema STAGE
+      Role: !GetAtt rRoleGlue.Arn
+      DatabaseName: !Ref rGlueDatabaseStage
+      Targets:
+        S3Targets:
+          - Path: !Join [ "/", [ !Join [ "-", [ !Ref pS3BucketStage, !Ref AWS::AccountId ] ] , "data", "schema", "covid" ] ] 
+      SchemaChangePolicy:
+        UpdateBehavior: "UPDATE_IN_DATABASE"
+        DeleteBehavior: "LOG"
